@@ -128,7 +128,7 @@ def register_site_tools(mcp: FastMCP):
             
             logger.info(f"Searching for '{query}' in site: {site_name}")
             
-            # First get site info to get site ID
+            # First get site info to get site ID and region
             site_info = await graph_client.get_site_info(domain, site_name)
             site_id = site_info.get("id")
             
@@ -136,8 +136,28 @@ def register_site_tools(mcp: FastMCP):
                 logger.error("Failed to get site ID")
                 return "Error: Could not retrieve site ID"
             
-            # Execute search request
-            search_url = f"sites/{site_id}/search"
+            # Try to get region from site collection data location
+            region = "NAM"  # Default to North America
+            try:
+                # Get additional site details including region info
+                site_details = await graph_client.get(f"sites/{site_id}?select=siteCollection")
+                data_location = site_details.get("siteCollection", {}).get("dataLocationCode", "")
+                
+                # Map data location codes to search regions
+                if data_location.startswith("EUR"):
+                    region = "EUR"
+                elif data_location.startswith("APC") or data_location.startswith("ASI"):
+                    region = "APC"
+                else:
+                    region = "NAM"
+                    
+                logger.debug(f"Detected region: {region} from data location: {data_location}")
+            except Exception as e:
+                logger.warning(f"Could not determine region, using default NAM: {e}")
+                region = "NAM"
+            
+            # Execute search request using correct Microsoft Graph search API
+            search_url = "search/query"
             search_data = {
                 "requests": [
                     {
@@ -147,8 +167,11 @@ def register_site_tools(mcp: FastMCP):
                             "list"
                         ],
                         "query": {
-                            "queryString": query
-                        }
+                            "queryString": f"path:{site_info.get('webUrl', '')} {query}"
+                        },
+                        "from": 0,
+                        "size": 25,
+                        "region": region  # Required for application permissions. Auto-detected from tenant location
                     }
                 ]
             }
@@ -158,14 +181,32 @@ def register_site_tools(mcp: FastMCP):
             
             # Format search results
             formatted_results = []
-            for result in search_results.get("value", [])[0].get("hitsContainers", []):
-                for hit in result.get("hits", []):
-                    formatted_results.append({
-                        "title": hit.get("resource", {}).get("name", "Unknown"),
-                        "url": hit.get("resource", {}).get("webUrl", "Unknown"),
-                        "type": hit.get("resource", {}).get("@odata.type", "Unknown"),
-                        "summary": hit.get("summary", "No summary available")
-                    })
+            for request_result in search_results.get("value", []):
+                for hits_container in request_result.get("hitsContainers", []):
+                    for hit in hits_container.get("hits", []):
+                        resource = hit.get("resource", {})
+                        
+                        # Extract drive_id and item_id for document access
+                        drive_id = resource.get("parentReference", {}).get("driveId", "Unknown")
+                        item_id = resource.get("id", "Unknown")
+                        
+                        # Get file path info
+                        parent_ref = resource.get("parentReference", {})
+                        path = parent_ref.get("path", "Unknown")
+                        if path != "Unknown" and "/drive/root:" in path:
+                            # Clean up the path to show just the folder structure
+                            path = path.split("/drive/root:")[-1] or "/"
+                        
+                        formatted_results.append({
+                            "title": resource.get("name", resource.get("title", "Unknown")),
+                            "url": resource.get("webUrl", "Unknown"),
+                            "type": resource.get("@odata.type", "Unknown"),
+                            "summary": hit.get("summary", "No summary available"),
+                            "path": path,
+                            "drive_id": drive_id,
+                            "item_id": item_id,
+                            "site_id": site_id  # Include site_id for convenience
+                        })
             
             logger.info(f"Search returned {len(formatted_results)} results")
             return json.dumps(formatted_results, indent=2)
@@ -484,4 +525,135 @@ def register_site_tools(mcp: FastMCP):
             return json.dumps(processed_content, indent=2)
         except Exception as e:
             logger.error(f"Error in get_document_content: {str(e)}")
+            return f"Error getting document content: {str(e)}"
+    
+    @mcp.tool()
+    async def get_document_by_url(ctx: Context, document_url: str, drive_id: str = None, item_id: str = None) -> str:
+        """Get and process content from a SharePoint document using its URL.
+        
+        This tool can handle both direct file URLs and SharePoint Forms URLs.
+        For Forms URLs (DispForm.aspx), you must provide drive_id and item_id from search results.
+        
+        Args:
+            document_url: Full SharePoint URL to the document (e.g., from search results)
+            drive_id: Drive ID (required for Forms URLs, optional for direct URLs)
+            item_id: Item ID (required for Forms URLs, optional for direct URLs)
+        """
+        logger.info(f"Tool called: get_document_by_url for URL: {document_url}")
+        
+        try:
+            # Get authentication context and refresh if needed
+            sp_ctx = ctx.request_context.lifespan_context
+            await refresh_token_if_needed(sp_ctx)
+            
+            # Parse the SharePoint URL to extract site, drive, and item information
+            # Example URL: https://2b4dvc.sharepoint.com/sites/dev/Shared Documents/folder/file.pdf
+            
+            # Validate URL format
+            if "sharepoint.com" not in document_url:
+                return "Error: Invalid SharePoint URL"
+            
+            url_parts = document_url.split("/")
+            if len(url_parts) < 6:
+                return "Error: Invalid SharePoint URL format"
+            
+            # Extract site name from the URL
+            site_name_from_url = url_parts[4]  # e.g., "dev"
+            
+            # Use the configured site URL for consistent domain/site handling (same as search function)
+            site_parts = SHAREPOINT_CONFIG["site_url"].replace("https://", "").split("/")
+            domain = site_parts[0]
+            configured_site_name = site_parts[2] if len(site_parts) > 2 else "root"
+            
+            # Verify the URL matches our configured site
+            if site_name_from_url != configured_site_name:
+                return f"Error: URL site '{site_name_from_url}' doesn't match configured site '{configured_site_name}'"
+            
+            # Create Graph client
+            graph_client = GraphClient(sp_ctx)
+            
+            # Get site info using the same method as the search function
+            site_info = await graph_client.get_site_info(domain, configured_site_name)
+            site_id = site_info.get("id")
+            
+            if not site_id:
+                return "Error: Could not retrieve site ID"
+            
+            # Extract file path from URL
+            # Remove the base site URL part and get the file path
+            base_site_url = f"https://{domain}/sites/{configured_site_name}/"
+            if not document_url.startswith(base_site_url):
+                return "Error: URL doesn't match expected SharePoint site format"
+            
+            file_path = document_url[len(base_site_url):]
+            
+            # Handle different URL formats
+            if "Forms/DispForm.aspx" in file_path:
+                # SharePoint Forms URL (e.g., DispForm.aspx?ID=5)
+                # For these URLs, we need to use the drive_id and item_id from search results
+                if not drive_id or not item_id:
+                    return "Error: Forms URLs require drive_id and item_id parameters. Please provide them from the search results, or use get_document_content tool instead."
+                
+                # Use the provided drive_id and item_id to get the document content directly
+                try:
+                    # Extract filename from URL or use a generic name
+                    filename = "document"  # We'll try to get the real name from the item info
+                    
+                    # Get item info to get the actual filename
+                    item_info = await graph_client.get(f"sites/{site_id}/drives/{drive_id}/items/{item_id}")
+                    filename = item_info.get("name", "document")
+                    
+                    # Get document content
+                    content = await graph_client.get_document_content(site_id, drive_id, item_id)
+                    
+                    # Process document content based on file type
+                    processed_content = DocumentProcessor.process_document(content, filename)
+                    
+                    logger.info(f"Successfully processed document content for: {filename}")
+                    return json.dumps(processed_content, indent=2)
+                    
+                except Exception as e:
+                    return f"Error accessing Forms URL document: {str(e)}"
+                
+            elif "Shared Documents/" in file_path:
+                # Standard document library URL
+                relative_path = file_path.replace("Shared Documents/", "")
+                
+                # Get the default drive (Shared Documents)
+                drives = await graph_client.get(f"sites/{site_id}/drives")
+                default_drive = None
+                for drive in drives.get("value", []):
+                    if drive.get("name") == "Documents":  # Default document library
+                        default_drive = drive
+                        break
+                
+                if not default_drive:
+                    return "Error: Could not find default document library"
+                
+                drive_id = default_drive.get("id")
+                
+                # Get item by path
+                try:
+                    item_endpoint = f"sites/{site_id}/drives/{drive_id}/root:/{relative_path}"
+                    item_info = await graph_client.get(item_endpoint)
+                    item_id = item_info.get("id")
+                    filename = item_info.get("name")
+                    
+                    # Get document content
+                    content = await graph_client.get_document_content(site_id, drive_id, item_id)
+                    
+                    # Process document content based on file type
+                    processed_content = DocumentProcessor.process_document(content, filename)
+                    
+                    logger.info(f"Successfully processed document content for: {filename}")
+                    return json.dumps(processed_content, indent=2)
+                    
+                except Exception as e:
+                    return f"Error accessing document: {str(e)}"
+            
+            else:
+                return "Error: Unsupported URL format. This tool works with direct document URLs from Shared Documents, not Forms URLs. For Forms URLs, use get_document_content with drive_id and item_id from search results."
+                
+        except Exception as e:
+            logger.error(f"Error in get_document_by_url: {str(e)}")
             return f"Error getting document content: {str(e)}"
