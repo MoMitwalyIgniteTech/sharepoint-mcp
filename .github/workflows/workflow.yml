@@ -1,0 +1,110 @@
+name: Publish to MCP Hive
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force publish even if not a release'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests toml
+        
+    - name: Verify MCP Hive API Key
+      run: |
+        if [ -z "${{ secrets.MCP_HIVE_API_KEY }}" ]; then
+          echo "❌ MCP_HIVE_API_KEY secret not found"
+          exit 1
+        else
+          echo "✅ MCP_HIVE_API_KEY found in secrets"
+        fi
+    - name: Get version from pyproject.toml
+      id: get_version
+      run: |
+        VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📋 Found version: $VERSION"
+    - name: Create custom payload file
+      run: |
+        cat > custom_payload.json << EOF
+        {
+          "version": "${{ steps.get_version.outputs.version }}",
+          "homepage": "https://github.com/DEmodoriGatsuO/sharepoint-mcp",
+          "env": [
+            {
+              "name": "TENANT_ID",
+              "description": "Your Azure AD tenant ID"
+            },
+            {
+              "name": "CLIENT_ID", 
+              "description": "Your Azure AD application client ID"
+            },
+            {
+              "name": "CLIENT_SECRET",
+              "description": "Your Azure AD application client secret"
+            },
+            {
+              "name": "SHAREPOINT_SITE_URL",
+              "description": "Your SharePoint site URL (e.g., https://yourtenant.sharepoint.com/sites/yoursite)"
+            },
+            {
+              "name": "USERNAME",
+              "description": "Your SharePoint username"
+            },
+            {
+              "name": "PASSWORD",
+              "description": "Your SharePoint password"
+            }
+          ],
+          "tags": ["sharepoint", "microsoft", "document-management", "mcp-server"]
+        }
+        EOF
+        echo "📋 Created custom payload:"
+        cat custom_payload.json
+    - name: Create zip file
+      run: |
+        zip -r ../sharepoint-mcp.zip ./*
+        echo "📦 Created zip file: ../sharepoint-mcp.zip"
+        ls -la ../sharepoint-mcp.zip
+        
+    - name: Run publish script
+      run: |
+        python scripts/publish.py \
+          --api-key "${{ secrets.MCP_HIVE_API_KEY }}" \
+          --hive-id "b102d023-0248-436f-891b-641b6884af93" \
+          --base-url "https://mcp-hive.ti.trilogy.com" \
+          --zip-path "../sharepoint-mcp.zip" \
+          --custom-payload "custom_payload.json"
+        
+    - name: Upload success notification
+      if: success()
+      run: |
+        echo "🎉 Successfully published to MCP Hive!"
+        echo "Version: ${{ steps.get_version.outputs.version }}"
+        
+    - name: Upload failure notification
+      if: failure()
+      run: |
+        echo "❌ Failed to publish to MCP Hive"
+        exit 1 
