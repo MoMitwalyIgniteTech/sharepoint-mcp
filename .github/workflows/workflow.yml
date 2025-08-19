@@ -92,7 +92,7 @@ jobs:
       run: |
         python scripts/publish.py \
           --api-key "${{ secrets.MCP_HIVE_API_KEY }}" \
-          --hive-id "b102d023-0248-436f-891b-641b6884af93" \
+          --hive-id "f9274cb8-bb70-4989-ab73-5be92e27f4a2" \
           --base-url "https://mcp-hive.ti.trilogy.com" \
           --zip-path "../sharepoint-mcp.zip" \
           --custom-payload "custom_payload.json"
