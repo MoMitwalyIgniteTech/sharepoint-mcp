@@ -39,9 +39,9 @@ dev = [
 sharepoint-mcp = "server:main"
 
 [project.urls]
-Homepage = "https://github.com/DEmodoriGatsuO/sharepoint-mcp"
-Repository = "https://github.com/DEmodoriGatsuO/sharepoint-mcp"
-Issues = "https://github.com/DEmodoriGatsuO/sharepoint-mcp/issues"
+Homepage = "https://github.com/MoMitwalyIgniteTech/sharepoint-mcp"
+Repository = "https://github.com/MoMitwalyIgniteTech/sharepoint-mcp"
+Issues = "https://github.com/MoMitwalyIgniteTech/sharepoint-mcp/issues"
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]
