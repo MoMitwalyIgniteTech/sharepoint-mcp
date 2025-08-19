@@ -49,35 +49,22 @@ jobs:
       run: |
         cat > custom_payload.json << EOF
         {
+          "hiveName": "sharepoint-mcp",
+          "hiveDescription": "SharePoint Model Context Protocol server for Microsoft 365 content and site management.",
           "version": "${{ steps.get_version.outputs.version }}",
-          "homepage": "https://github.com/DEmodoriGatsuO/sharepoint-mcp",
+          "command": "bash scripts/run-public-mcp-server.sh sharepoint-mcp --with-setup",
+          "args": [],
           "env": [
-            {
-              "name": "TENANT_ID",
-              "description": "Your Azure AD tenant ID"
-            },
-            {
-              "name": "CLIENT_ID", 
-              "description": "Your Azure AD application client ID"
-            },
-            {
-              "name": "CLIENT_SECRET",
-              "description": "Your Azure AD application client secret"
-            },
-            {
-              "name": "SHAREPOINT_SITE_URL",
-              "description": "Your SharePoint site URL (e.g., https://yourtenant.sharepoint.com/sites/yoursite)"
-            },
-            {
-              "name": "USERNAME",
-              "description": "Your SharePoint username"
-            },
-            {
-              "name": "PASSWORD",
-              "description": "Your SharePoint password"
-            }
+            {"name": "TENANT_ID", "description": "Your Azure AD tenant ID"},
+            {"name": "CLIENT_ID", "description": "Your Azure AD application client ID"},
+            {"name": "CLIENT_SECRET", "description": "Your Azure AD application client secret"},
+            {"name": "SITE_URL", "description": "SharePoint site URL (e.g., https://yourtenant.sharepoint.com/sites/yoursite)"},
+            {"name": "USERNAME", "description": "SharePoint username (if used for delegated flows)"},
+            {"name": "PASSWORD", "description": "SharePoint password (if used for delegated flows)"},
+            {"name": "DEBUG", "description": "Enable verbose logging (true/false)"}
           ],
-          "tags": ["sharepoint", "microsoft", "document-management", "mcp-server"]
+          "tags": ["sharepoint", "microsoft", "document-management", "mcp-server"],
+          "homePage": "https://github.com/MoMitwalyIgniteTech/sharepoint-mcp"
         }
         EOF
         echo "📋 Created custom payload:"

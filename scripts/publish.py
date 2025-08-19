@@ -24,7 +24,7 @@ class MCPHiveUpdater:
         """Get headers for API requests"""
         headers = {}
         if self.api_key:
-            headers["x-api-key"] = f"{self.api_key}"
+            headers["X-Api-Key"] = f"{self.api_key}"
         return headers
 
     def update_hive_from_mcp_server(
